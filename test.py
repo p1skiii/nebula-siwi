@@ -46,19 +46,31 @@ with connection_pool.session_context(NEBULA_USER, NEBULA_PASSWORD) as session:
     else:
         print("获取player标签结构失败:", resp.error_msg())
     
-    # 步骤2: 为player标签添加embedding属性
-    alter_query = 'ALTER TAG player ADD (embedding double)'
+    # 步骤2: 先删除旧的embedding属性（如果存在）
+    alter_query = 'ALTER TAG player DROP (embedding)'
     resp = session.execute(alter_query)
     if resp.is_succeeded():
-        print("\n成功添加embedding属性")
+        print("\n成功删除旧的embedding属性")
     else:
-        print("添加属性失败 (可能已存在):", resp.error_msg())
+        print("删除属性失败:", resp.error_msg())
     
-    # 步骤3: 等待Schema变更生效 (这是关键修改)
+    # 等待Schema变更生效
     print("\n等待Schema变更生效...")
     time.sleep(5)  # 等待5秒钟让Schema变更生效
     
-    # 再次检查标签结构，确认embedding属性已添加
+    # 步骤3: 添加新的embedding属性为list<double>类型
+    alter_query = 'ALTER TAG player ADD (embedding list<double>)'
+    resp = session.execute(alter_query)
+    if resp.is_succeeded():
+        print("\n成功添加list<double>类型的embedding属性")
+    else:
+        print("添加属性失败:", resp.error_msg())
+    
+    # 再次等待Schema变更生效
+    print("\n等待Schema变更生效...")
+    time.sleep(5)  # 等待5秒钟让Schema变更生效
+    
+    # 确认属性已添加
     resp = session.execute('DESCRIBE TAG player')
     if resp.is_succeeded():
         print("\n更新后的player标签结构:")
@@ -84,13 +96,20 @@ with connection_pool.session_context(NEBULA_USER, NEBULA_PASSWORD) as session:
         print("没有找到球员")
         sys.exit(1)
     
-    # 步骤5: 尝试不同的更新方式 - 使用UPSERT而不是UPDATE
+    # 步骤5: 为每个球员生成向量embedding并更新
     updated_count = 0
+    embedding_dim = 32  # 设置embedding维度，通常为32、64、128等
+    
     for player_id in player_ids:
-        random_value = round(np.random.uniform(30, 40), 2)
+        # 为每个球员生成一个随机的embedding向量
+        # 这里我们生成一个维度为embedding_dim的向量，值在-0.1到0.1之间
+        random_vector = np.random.uniform(-0.1, 0.1, size=embedding_dim).tolist()
         
-        # 使用UPSERT而不是UPDATE
-        upsert_query = f'UPSERT VERTEX ON player "{player_id}" SET embedding = {random_value}'
+        # 将向量转换为NebulaGraph的list格式
+        vector_str = "[" + ", ".join(map(str, random_vector)) + "]"
+        
+        # 使用UPSERT更新球员的embedding值
+        upsert_query = f'UPSERT VERTEX ON player "{player_id}" SET embedding = {vector_str}'
         resp = session.execute(upsert_query)
         
         if resp.is_succeeded():
@@ -98,7 +117,7 @@ with connection_pool.session_context(NEBULA_USER, NEBULA_PASSWORD) as session:
         else:
             print(f"更新球员 {player_id} 失败: {resp.error_msg()}")
     
-    print(f"\n成功更新 {updated_count}/{len(player_ids)} 个球员的embedding属性")
+    print(f"\n成功更新 {updated_count}/{len(player_ids)} 个球员的embedding向量")
     
     # 步骤6: 验证几个球员的embedding值
     if player_ids and updated_count > 0:
@@ -108,8 +127,13 @@ with connection_pool.session_context(NEBULA_USER, NEBULA_PASSWORD) as session:
         resp = session.execute(verify_query)
         
         if resp.is_succeeded():
-            print("\n验证几个球员的embedding值:")
-            print(resp)
+            print("\n验证几个球员的embedding向量 (显示前5个值):")
+            for i in range(resp.row_size()):
+                player_name = resp.row_values(i)[0].as_string()
+                embedding_list = resp.row_values(i)[1].as_list()
+                # 只显示前5个值，防止输出过长
+                preview = [embedding_list[j].as_double() for j in range(min(5, len(embedding_list)))]
+                print(f"球员: {player_name}, Embedding前5个值: {preview}... (共{len(embedding_list)}维)")
         else:
             print("验证失败:", resp.error_msg())
 
