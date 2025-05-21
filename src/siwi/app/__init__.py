@@ -28,45 +28,38 @@ def query():
     return jsonify({"answer": answer})
 
 
-@app.route("/api/v1/entity/<entity_tag>/<entity_id>/features", methods=["GET"])
-def get_entity_features(entity_tag, entity_id):
-    """获取指定实体的特征向量
+@app.route("/api/v1/entity/<entity_tag>/<entity_id>/embedding", methods=["GET"])
+def get_entity_embedding_api(entity_tag, entity_id):
+    """获取指定实体的embedding1值
     
     Args:
         entity_tag: 实体的标签，例如 'player'
         entity_id: 实体的ID
         
     Returns:
-        JSON格式的实体特征向量
+        JSON格式的embedding值
     """
     try:
-        # 获取embedding列表
-        embedding_list = get_entity_embedding(entity_id, entity_tag)
+        from siwi.feature_store import get_entity_embedding
+        embedding_value = get_entity_embedding(entity_id, entity_tag)
         
-        if embedding_list is None:
+        if embedding_value is None:
             return jsonify({
                 "success": False,
-                "error": f"无法找到实体 {entity_tag}:{entity_id} 的embedding"
+                "error": f"无法找到实体 {entity_tag}:{entity_id} 的embedding1值"
             }), 404
         
-        # 转换为Tensor (可选，这里我们只是检查转换是否成功)
-        tensor = convert_embedding_to_tensor(embedding_list)
-        if tensor is None:
-            return jsonify({
-                "success": False,
-                "error": "embedding转换为tensor失败"
-            }), 500
-        
-        # 返回embedding列表，前端可以根据需要转换为tensor
+        # 返回结果
         return jsonify({
             "success": True,
             "entity_id": entity_id,
             "entity_type": entity_tag,
-            "features": embedding_list,
-            "dimension": len(embedding_list)
+            "embedding": embedding_value
         })
     
     except Exception as e:
+        import traceback
+        print(f"Error in get_entity_embedding_api: {traceback.format_exc()}")
         return jsonify({
             "success": False,
             "error": str(e)
@@ -97,6 +90,20 @@ if __name__ == "__main__":
         app.run(host="0.0.0.0", port=5000)
     finally:
         connection_pool.close()
+    print("\n=== 已注册的路由 ===")
+    for rule in app.url_map.iter_rules():
+        print(f"{rule.endpoint}: {rule}")
+    print("==================\n")
+    
+    try:
+        app.run(host="0.0.0.0", port=5000)
+    finally:
+        connection_pool.close()
 else:
     connection_pool.init(ng_endpoints, ng_config)
     siwi_bot = bot.SiwiBot(connection_pool)
+
+def init_app():
+    global siwi_bot
+    if siwi_bot is None:
+        siwi_bot = bot.SiwiBot(connection_pool)
