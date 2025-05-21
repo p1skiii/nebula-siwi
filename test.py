@@ -27,58 +27,69 @@ with connection_pool.session_context(NEBULA_USER, NEBULA_PASSWORD) as session:
     if not resp.is_succeeded():
         print("切换图空间失败:", resp.error_msg())
         sys.exit(1)
+    print("成功切换到图空间:", NEBULA_SPACE)
     
-    # 步骤1: 检查TAG结构，查看实际的Tag名称
-    desc_query = 'SHOW TAGS'
-    resp = session.execute(desc_query)
-    if resp.is_succeeded():
-        print("图空间中的所有标签:")
-        print(resp)
-    else:
-        print("获取标签列表失败:", resp.error_msg())
-    
-    # 查看具体的player标签结构
-    desc_player = 'DESCRIBE TAG player'
-    resp = session.execute(desc_player)
-    if resp.is_succeeded():
-        print("\nplayer标签的结构:")
-        print(resp)
-    else:
-        print("获取player标签结构失败:", resp.error_msg())
-    
-    # 步骤2: 先删除旧的embedding属性（如果存在）
-    alter_query = 'ALTER TAG player DROP (embedding)'
-    resp = session.execute(alter_query)
-    if resp.is_succeeded():
-        print("\n成功删除旧的embedding属性")
-    else:
-        print("删除属性失败:", resp.error_msg())
-    
-    # 等待Schema变更生效
-    print("\n等待Schema变更生效...")
-    time.sleep(5)  # 等待5秒钟让Schema变更生效
-    
-    # 步骤3: 添加新的embedding属性为list<double>类型
-    alter_query = 'ALTER TAG player ADD (embedding list<double>)'
-    resp = session.execute(alter_query)
-    if resp.is_succeeded():
-        print("\n成功添加list<double>类型的embedding属性")
-    else:
-        print("添加属性失败:", resp.error_msg())
-    
-    # 再次等待Schema变更生效
-    print("\n等待Schema变更生效...")
-    time.sleep(5)  # 等待5秒钟让Schema变更生效
-    
-    # 确认属性已添加
+    # 1. 查看当前Schema
+    print("\n步骤1: 查看当前Schema...")
     resp = session.execute('DESCRIBE TAG player')
     if resp.is_succeeded():
-        print("\n更新后的player标签结构:")
+        print("当前player标签的结构:")
         print(resp)
+        
+        # 检查embedding1是否存在
+        has_embedding1 = False
+        for i in range(resp.row_size()):
+            field = resp.row_values(i)[0].as_string()
+            if field == "embedding1":
+                has_embedding1 = True
+                print(f"发现embedding1字段，类型为: {resp.row_values(i)[1].as_string()}")
+                break
     else:
         print("获取player标签结构失败:", resp.error_msg())
+        sys.exit(1)
     
-    # 步骤4: 获取所有球员的ID
+    # 2. 添加embedding1属性
+    if not has_embedding1:
+        print("\n步骤2: 添加新的embedding1属性...")
+        resp = session.execute('ALTER TAG player ADD (embedding1 double)')
+        if resp.is_succeeded():
+            print("成功添加embedding1属性")
+        else:
+            print("添加embedding1属性失败:", resp.error_msg())
+            sys.exit(1)
+        
+        # 等待Schema变更生效
+        print("等待Schema变更生效...")
+        time.sleep(10)
+    else:
+        print("\n步骤2: embedding1属性已存在，无需添加")
+    
+    # 3. 验证属性是否已添加
+    print("\n步骤3: 验证embedding1属性是否已添加...")
+    resp = session.execute('DESCRIBE TAG player')
+    if resp.is_succeeded():
+        print("更新后的player标签结构:")
+        print(resp)
+        
+        # 再次检查embedding1是否存在
+        has_embedding1 = False
+        for i in range(resp.row_size()):
+            field = resp.row_values(i)[0].as_string()
+            if field == "embedding1":
+                has_embedding1 = True
+                print(f"确认embedding1字段已添加，类型为: {resp.row_values(i)[1].as_string()}")
+                break
+        
+        if not has_embedding1:
+            print("警告: 尽管操作成功，但embedding1字段未出现在Schema中")
+            print("建议重启NebulaGraph服务或检查官方文档关于Schema变更的说明")
+            sys.exit(1)
+    else:
+        print("获取player标签结构失败:", resp.error_msg())
+        sys.exit(1)
+    
+    # 4. 获取所有球员ID
+    print("\n步骤4: 获取所有球员ID...")
     player_query = 'MATCH (v:player) RETURN id(v) AS id'
     resp = session.execute(player_query)
     if not resp.is_succeeded():
@@ -91,51 +102,67 @@ with connection_pool.session_context(NEBULA_USER, NEBULA_PASSWORD) as session:
         for i in range(resp.row_size()):
             player_id = resp.row_values(i)[0].as_string()
             player_ids.append(player_id)
-        print(f"\n找到 {len(player_ids)} 个球员")
+        print(f"找到 {len(player_ids)} 个球员")
     else:
         print("没有找到球员")
         sys.exit(1)
     
-    # 步骤5: 为每个球员生成向量embedding并更新
-    updated_count = 0
-    embedding_dim = 32  # 设置embedding维度，通常为32、64、128等
+    # 5. 测试更新单个球员的embedding1
+    print("\n步骤5: 测试更新单个球员的embedding1...")
+    test_player = player_ids[0]
+    test_value = 50.5  # 使用不同于embedding的值以区分
+    test_query = f'UPSERT VERTEX ON player "{test_player}" SET embedding1 = {test_value}'
+    resp = session.execute(test_query)
     
-    for player_id in player_ids:
-        # 为每个球员生成一个随机的embedding向量
-        # 这里我们生成一个维度为embedding_dim的向量，值在-0.1到0.1之间
-        random_vector = np.random.uniform(-0.1, 0.1, size=embedding_dim).tolist()
+    if resp.is_succeeded():
+        print(f"测试成功: 球员 {test_player} 的embedding1值已更新为 {test_value}")
         
-        # 将向量转换为NebulaGraph的list格式
-        vector_str = "[" + ", ".join(map(str, random_vector)) + "]"
-        
-        # 使用UPSERT更新球员的embedding值
-        upsert_query = f'UPSERT VERTEX ON player "{player_id}" SET embedding = {vector_str}'
-        resp = session.execute(upsert_query)
-        
-        if resp.is_succeeded():
-            updated_count += 1
-        else:
-            print(f"更新球员 {player_id} 失败: {resp.error_msg()}")
-    
-    print(f"\n成功更新 {updated_count}/{len(player_ids)} 个球员的embedding向量")
-    
-    # 步骤6: 验证几个球员的embedding值
-    if player_ids and updated_count > 0:
-        sample_ids = player_ids[:3]  # 取前3个球员作为样本
-        sample_ids_str = '", "'.join(sample_ids)
-        verify_query = f'FETCH PROP ON player "{sample_ids_str}" YIELD properties(vertex).name, properties(vertex).embedding'
+        # 验证测试更新
+        verify_query = f'FETCH PROP ON player "{test_player}" YIELD properties(vertex).name, properties(vertex).embedding, properties(vertex).embedding1'
         resp = session.execute(verify_query)
-        
         if resp.is_succeeded():
-            print("\n验证几个球员的embedding向量 (显示前5个值):")
-            for i in range(resp.row_size()):
-                player_name = resp.row_values(i)[0].as_string()
-                embedding_list = resp.row_values(i)[1].as_list()
-                # 只显示前5个值，防止输出过长
-                preview = [embedding_list[j].as_double() for j in range(min(5, len(embedding_list)))]
-                print(f"球员: {player_name}, Embedding前5个值: {preview}... (共{len(embedding_list)}维)")
+            print("验证结果:")
+            print(resp)
+            
+            # 6. 更新所有球员的embedding1
+            print("\n步骤6: 更新所有球员的embedding1属性...")
+            updated_count = 1  # 已经更新了一个测试球员
+            
+            for player_id in player_ids[1:]:  # 跳过第一个已测试的球员
+                # 为embedding1生成40-50之间的随机值（与embedding不同的范围）
+                random_value = round(np.random.uniform(40, 50), 2)
+                upsert_query = f'UPSERT VERTEX ON player "{player_id}" SET embedding1 = {random_value}'
+                resp = session.execute(upsert_query)
+                
+                if resp.is_succeeded():
+                    updated_count += 1
+                    # 每10个更新显示一次进度
+                    if updated_count % 10 == 0 or updated_count == len(player_ids):
+                        print(f"已更新 {updated_count}/{len(player_ids)} 个球员")
+                else:
+                    print(f"更新球员 {player_id} 失败: {resp.error_msg()}")
+            
+            print(f"\n总结: 成功更新 {updated_count}/{len(player_ids)} 个球员的embedding1属性")
+            
+            # 7. 验证最终结果
+            print("\n步骤7: 验证最终结果...")
+            if updated_count > 0:
+                sample_ids = player_ids[:3]  # 取前3个球员作为样本
+                sample_ids_str = '", "'.join(sample_ids)
+                verify_query = f'FETCH PROP ON player "{sample_ids_str}" YIELD properties(vertex).name, properties(vertex).embedding, properties(vertex).embedding1'
+                resp = session.execute(verify_query)
+                
+                if resp.is_succeeded():
+                    print("验证几个球员的embedding和embedding1值:")
+                    print(resp)
+                else:
+                    print("验证失败:", resp.error_msg())
         else:
-            print("验证失败:", resp.error_msg())
+            print(f"验证测试更新失败: {resp.error_msg()}")
+    else:
+        print(f"测试更新失败: {resp.error_msg()}")
+        print("可能需要重启NebulaGraph服务或检查服务配置")
 
 # 关闭连接池
 connection_pool.close()
+print("连接池已关闭")
