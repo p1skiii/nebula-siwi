@@ -96,20 +96,3 @@ def get_entity_embedding_tensor(entity_id: str, entity_tag: str = "player",
     embedding_value = get_entity_embedding(entity_id, entity_tag, embedding_field)
     return convert_embedding_to_tensor(embedding_value)
 
-# --- 模块自测试 ---
-if __name__ == '__main__':
-    player_id = "player100"
-    print(f"获取球员 {player_id} 的embedding1值...")
-    
-    # 获取embedding1值
-    embedding = get_entity_embedding(player_id)
-    
-    if embedding is not None:
-        print(f"embedding1值: {embedding}")
-        
-        # 转换为Tensor
-        tensor = convert_embedding_to_tensor(embedding)
-        print(f"转换为Tensor: {tensor}")
-        print(f"Tensor形状: {tensor.shape}")
-    else:
-        print(f"无法获取球员 {player_id} 的embedding1")
