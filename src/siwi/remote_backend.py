@@ -248,72 +248,8 @@ class NebulaGraphStore(GraphStore):
         """
         print(f"获取{edge_type}类型的边，布局: {layout}")
         
-        # 只支持COO格式
-        if layout != "coo":
-            raise NotImplementedError(f"不支持{layout}布局，只支持coo")
-        
-        # 处理边类型
-        if isinstance(edge_type, tuple) and len(edge_type) == 3:
-            # 如果是(src_type, edge_name, dst_type)格式
-            src_type, edge_name, dst_type = edge_type
-        else:
-            # 如果是字符串格式
-            edge_name = edge_type
-            src_type = dst_type = None
-        
-        # 如果提供了索引（源节点和目标节点）
-        if index is not None:
-            src_indices, dst_indices = index
-            
-            # 将索引转换为ID列表
-            src_ids = [str(idx.item()) for idx in src_indices]
-            dst_ids = [str(idx.item()) for idx in dst_indices]
-            
-            print(f"  查询从{len(src_ids)}个源节点到{len(dst_ids)}个目标节点的边")
-            
-            # 为每个源节点查询边
-            edges = []
-            for src_idx, src_id in enumerate(src_ids):
-                # 从该源节点获取一跳子图
-                subgraph = self.sampler.sample_subgraph(
-                    center_vid=src_id,
-                    n_hops=1,
-                    space_name=self.space_name
-                )
-                
-                # 处理子图边
-                if 'edge_index' in subgraph and subgraph['edge_index'] is not None:
-                    edge_index = subgraph['edge_index']
-                    num_edges = edge_index.shape[1]
-                    
-                    # 查找源节点为src_id的边
-                    for i in range(num_edges):
-                        # 获取边的源和目标索引
-                        sub_src_idx = int(edge_index[0, i])
-                        sub_dst_idx = int(edge_index[1, i])
-                        
-                        # 获取实际ID
-                        sub_src_id = subgraph['idx_to_vid'][sub_src_idx]
-                        sub_dst_id = subgraph['idx_to_vid'][sub_dst_idx]
-                        
-                        # 只保留符合条件的边：源节点是src_id，目标节点在dst_ids中
-                        if sub_src_id == src_id and sub_dst_id in dst_ids:
-                            # 将边加入结果，使用输入索引
-                            dst_idx = dst_ids.index(sub_dst_id)
-                            edges.append((src_idx, dst_idx))
-            
-            # 如果没有边，返回空张量
-            if not edges:
-                return torch.zeros((2, 0), dtype=torch.long)
-            
-            # 构建边索引张量
-            edge_array = np.array(edges, dtype=np.int64).T
-            return torch.from_numpy(edge_array)
-            
-        else:
-            # 如果没有提供索引，获取所有边（不推荐用于大图）
-            print("  警告：未提供节点索引，将返回空边集")
-            return torch.zeros((2, 0), dtype=torch.long)
+        # 直接调用内部方法
+        return self._get_edge_index(edge_type, layout, size, index)
     
     def get_all_edge_index(self, edge_type: Union[str, Tuple[str, str, str]], 
                           layout: str = "coo",
@@ -377,10 +313,16 @@ class NebulaGraphStore(GraphStore):
             src_indices, dst_indices = index
             
             # 将索引转换为ID列表
-            src_ids = [str(idx.item()) for idx in src_indices]
-            dst_ids = [str(idx.item()) for idx in dst_indices]
+            if self.id_mapper:
+                # 使用提供的ID映射函数
+                src_ids = [self.id_mapper(idx.item()) for idx in src_indices]
+                dst_ids = [self.id_mapper(idx.item()) for idx in dst_indices]
+            else:
+                # 使用默认格式
+                src_ids = [str(idx.item()) for idx in src_indices]
+                dst_ids = [str(idx.item()) for idx in dst_indices]
             
-            # 为每个源节点查询边
+            # 使用SubgraphSampler高效地收集边
             edges = []
             for src_idx, src_id in enumerate(src_ids):
                 # 从该源节点获取一跳子图
@@ -395,7 +337,7 @@ class NebulaGraphStore(GraphStore):
                     edge_index = subgraph['edge_index']
                     num_edges = edge_index.shape[1]
                     
-                    # 查找源节点为src_id的边
+                    # 提取有用的连接
                     for i in range(num_edges):
                         # 获取边的源和目标索引
                         sub_src_idx = int(edge_index[0, i])

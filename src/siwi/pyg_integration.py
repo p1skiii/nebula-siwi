@@ -120,12 +120,20 @@ class NebulaToTorch:
         # 使用加载器获取数据
         data = self.loader.load_data(center_nodes, indices, n_hops)
         
+        # 更新全局ID映射，确保一致性
+        if hasattr(data, 'node_ids') and data.node_ids:
+            for idx, node_id in enumerate(data.node_ids):
+                if node_id not in self.id_to_idx:
+                    new_idx = len(self.idx_to_id)
+                    self.id_to_idx[node_id] = new_idx
+                    self.idx_to_id.append(node_id)
+        
         # 转换为字典格式
         result = {
             "num_nodes": data.num_nodes,
-            "features": data.x.tolist(),
-            "edge_index": data.edge_index.tolist() if data.edge_index.numel() > 0 else [],
-            "node_ids": data.node_ids
+            "features": data.x.tolist() if hasattr(data, 'x') else [],
+            "edge_index": data.edge_index.tolist() if hasattr(data, 'edge_index') and data.edge_index.numel() > 0 else [],
+            "node_ids": data.node_ids if hasattr(data, 'node_ids') else []
         }
         
         return result
