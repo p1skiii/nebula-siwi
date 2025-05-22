@@ -2,13 +2,11 @@ import torch
 from nebula3.gclient.net import ConnectionPool
 from nebula3.Config import Config
 
-# --- NebulaGraph Connection Configuration ---
 NEBULA_HOST = '127.0.0.1'
 NEBULA_PORT = 9669
 NEBULA_USER = 'root'
 NEBULA_PASSWORD = 'nebula'
 NEBULA_GRAPH_SPACE = 'basketballplayer'
-# --- End Configuration ---
 
 _connection_pool = None
 
@@ -44,25 +42,20 @@ def get_entity_embedding(entity_id: str, entity_tag: str = "player", embedding_f
         query = f'FETCH PROP ON {entity_tag} "{entity_id}" YIELD properties(vertex).{embedding_field}'
         
         result = session.execute(query)
-        if not result.is_succeeded():
-            print(f"Error fetching {embedding_field} for {entity_tag} '{entity_id}': {result.error_msg()}")
-            return None
-
-        if result.row_size() == 0:
-            print(f"No vertex found for {entity_tag} '{entity_id}'")
+        if not result.is_succeeded() or result.row_size() == 0:
+            # 查询失败或没有结果，直接返回None
             return None
         
         embedding_value_wrapper = result.row_values(0)[0]
-
         if embedding_value_wrapper.is_empty():
-            print(f"No {embedding_field} attribute found for {entity_tag} '{entity_id}'")
+            # 属性不存在，返回None
             return None
         
-        # embedding1是单值double类型，直接返回浮点数
+        # 返回浮点数值
         return embedding_value_wrapper.as_double()
 
-    except Exception as e:
-        print(f"Exception while fetching {embedding_field} for {entity_tag} '{entity_id}': {e}")
+    except Exception:
+        # 出现异常，返回None
         return None
     finally:
         if session:
